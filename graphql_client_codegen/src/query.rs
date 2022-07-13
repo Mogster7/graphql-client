@@ -307,6 +307,33 @@ where
                     continue;
                 }
 
+                let directives = field.directives.iter().map(|directive| {
+                    use graphql_parser::query::Value::*;
+                    match directive.name.as_ref() {
+                        "include" => {
+                            assert_eq!(directive.arguments.len(), 1, "include directive contains more than one argument");
+                            assert_eq!(directive.arguments[0].0.as_ref(), "if", "include directive contains an argument other than 'if'");
+                            let var_value = &directive.arguments[0].1;
+                            if let Variable(_) = var_value{
+                                Directive::Include
+                            } else {
+                                panic!("include directive argument uses a non-variable type")
+                            }
+                        }
+                        "skip" => {
+                            assert_eq!(directive.arguments.len(), 1, "skip directive contains more than one argument");
+                            assert_eq!(directive.arguments[0].0.as_ref(), "if", "skip directive contains an argument other than 'if'");
+                            let var_value = &directive.arguments[0].1;
+                            if let Variable(_) = var_value{
+                                Directive::Skip
+                            } else {
+                                panic!("skip directive argument uses a non-variable type")
+                            }
+                        }
+                        _ => Directive::NotSupported
+                    }
+                }).collect();
+
                 let (field_id, schema_field) = object
                     .get_field_by_name(field.name.as_ref(), schema)
                     .ok_or_else(|| {
@@ -321,6 +348,7 @@ where
                     Selection::Field(SelectedField {
                         alias: field.alias.as_ref().map(|alias| alias.as_ref().into()),
                         field_id,
+                        directives,
                         selection_set: Vec::with_capacity(selection_set.items.len()),
                     }),
                     parent,

@@ -253,9 +253,18 @@ pub(crate) struct InlineFragment {
 }
 
 #[derive(Debug)]
+pub(crate) enum Directive {
+    NotSupported = 0,
+
+    Include,
+    Skip
+}
+
+#[derive(Debug)]
 pub(crate) struct SelectedField {
     pub(crate) alias: Option<String>,
     pub(crate) field_id: StoredFieldId,
+    pub(crate) directives: Vec<Directive>,
     pub(crate) selection_set: Vec<SelectionId>,
 }
 
@@ -266,5 +275,17 @@ impl SelectedField {
 
     pub(crate) fn schema_field<'a>(&self, schema: &'a Schema) -> &'a StoredField {
         schema.get_field(self.field_id)
+    }
+
+    pub(crate) fn is_optionally_included(&self) -> bool {
+        for directive in self.directives.iter() {
+            match directive {
+                Directive::Include => return true,
+                Directive::Skip => return true,
+                _ => ()
+            }
+        }
+
+        false
     }
 }

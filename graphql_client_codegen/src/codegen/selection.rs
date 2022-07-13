@@ -239,6 +239,7 @@ fn calculate_selection<'a>(
                                     rust_name: fragment.name.to_snake_case().into(),
                                     struct_id,
                                     deprecation: None,
+                                    optionally_included: false,
                                     boxed: fragment_is_recursive(*fragment_id, context.query.query),
                                 }),
                         }
@@ -285,6 +286,7 @@ fn calculate_selection<'a>(
                             field_type_qualifiers: &schema_field.r#type.qualifiers,
                             flatten: false,
                             deprecation: schema_field.deprecation(),
+                            optionally_included: field.is_optionally_included(),
                             boxed: false,
                         });
                     }
@@ -302,6 +304,7 @@ fn calculate_selection<'a>(
                             rust_name,
                             flatten: false,
                             deprecation: schema_field.deprecation(),
+                            optionally_included: field.is_optionally_included(),
                             boxed: false,
                         });
                     }
@@ -315,8 +318,9 @@ fn calculate_selection<'a>(
                             field_type_qualifiers: &schema_field.r#type.qualifiers,
                             field_type: Cow::Owned(struct_name_string.clone()),
                             flatten: false,
-                            boxed: false,
                             deprecation: schema_field.deprecation(),
+                            optionally_included: field.is_optionally_included(),
+                            boxed: false,
                         });
 
                         let type_id = context.push_type(ExpandedType {
@@ -361,6 +365,7 @@ fn calculate_selection<'a>(
                     struct_id,
                     flatten: true,
                     deprecation: None,
+                    optionally_included: false,
                     boxed: fragment_is_recursive(*fragment_id, context.query.query),
                 });
 
@@ -388,6 +393,7 @@ struct ExpandedField<'a> {
     struct_id: ResponseTypeId,
     flatten: bool,
     deprecation: Option<Option<&'a str>>,
+    optionally_included: bool,
     boxed: bool,
 }
 
@@ -401,6 +407,12 @@ impl<'a> ExpandedField<'a> {
 
         let qualified_type = if self.boxed {
             quote!(Box<#qualified_type>)
+        } else {
+            qualified_type
+        };
+
+        let qualified_type = if self.optionally_included {
+            quote!(Option<#qualified_type>)
         } else {
             qualified_type
         };
@@ -425,6 +437,7 @@ impl<'a> ExpandedField<'a> {
                 }
                 (Some(_), DeprecationStrategy::Deny) => return None,
             };
+
 
         let tokens = quote! {
             #optional_flatten
