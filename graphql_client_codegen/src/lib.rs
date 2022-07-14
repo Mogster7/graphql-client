@@ -51,6 +51,77 @@ lazy_static! {
         CacheMap::default();
 }
 
+fn get_query(
+    path: std::path::PathBuf
+) -> Result<(String, graphql_parser::query::Document<'static, String>), BoxError> {
+    // Get base relative path from the query file path
+    let mut base_path = path.clone();
+    assert!(base_path.pop(), "Failed to pop the query path's last element, which suggests it is empty. Should not happen.");
+
+    let lock = QUERY_CACHE.lock().expect("query cache is poisoned");
+
+    // Return an existing entry, if found
+    if lock.contains_key(&path) {
+        let entry = lock.get(&path).unwrap().clone();
+        return Ok(entry);
+    }
+
+    // Drop mutex to allow recursive entries to access the query cache
+    drop(lock);
+
+    let query_string = read_file(&path)?;
+
+    let mut query = graphql_parser::parse_query(&query_string)
+        .map_err(|err| GeneralError(format!("Query parser error: {}", err)))?
+        .into_static();
+
+    // Check for imports within the query
+    if query_string.find("#import").is_some() {
+        let import_split = query_string
+            .split("#import")
+            // Skip first as it will be empty even if #import is the first string in the file
+            .skip(1)
+            .collect::<std::vec::Vec<&str>>();
+
+        let imported_paths = import_split.iter().map(|import_path| {
+            // Strip quotation marks, trim and get only the filepath
+            let stripped_path = import_path.chars()
+                .take_while(|&c| c != '\n')
+                .collect::<String>()
+                .trim()
+                .replace("\"", "");
+
+            let relative_path = stripped_path.chars().nth(0) == Some('.');
+            if !relative_path {
+                panic!("Absolute paths not supported for import statements yet");
+            }
+
+            let mut path = base_path.clone();
+            path.push(std::path::PathBuf::from(stripped_path));
+            path
+        }).collect::<Vec<std::path::PathBuf>>();
+
+        for imported_path in imported_paths {
+            use graphql_parser::query::Definition;
+            let (_, imported_query_document) = get_query(imported_path)?;
+
+            let mut imported_fragments = imported_query_document.definitions.iter().filter(
+                |directive| match directive {
+                    Definition::Operation(_) => false,
+                    Definition::Fragment(_) => true
+                }
+            ).cloned().collect::<Vec<Definition<'static, String>>>();
+            query.definitions.append(&mut imported_fragments);
+        }
+    }
+
+    let mut lock = QUERY_CACHE.lock().expect("query cache is poisoned");
+    let result = (query_string, query);
+    lock.insert(path, result.clone());
+
+    Ok(result)
+}
+
 /// Generates Rust code given a query document, a schema and options.
 pub fn generate_module_token_stream(
     query_path: std::path::PathBuf,
@@ -90,19 +161,9 @@ pub fn generate_module_token_stream(
     };
 
     // We need to qualify the query with the path to the crate it is part of
-    let (query_string, query) = {
-        let mut lock = QUERY_CACHE.lock().expect("query cache is poisoned");
-        match lock.entry(query_path) {
-            hash_map::Entry::Occupied(o) => o.get().clone(),
-            hash_map::Entry::Vacant(v) => {
-                let query_string = read_file(v.key())?;
-                let query = graphql_parser::parse_query(&query_string)
-                    .map_err(|err| GeneralError(format!("Query parser error: {}", err)))?
-                    .into_static();
-                v.insert((query_string, query)).clone()
-            }
-        }
-    };
+    let (query_string, query) = get_query(
+        query_path
+    )?;
 
     let query = crate::query::resolve(&schema, &query)?;
 
